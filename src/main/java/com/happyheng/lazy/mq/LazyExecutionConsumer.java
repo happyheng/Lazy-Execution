@@ -2,40 +2,32 @@ package com.happyheng.lazy.mq;
 
 import com.google.gson.Gson;
 import com.happyheng.lazy.bean.SerializableMethod;
+import com.happyheng.lazy.bean.UnSerializableExecuteAbleMethod;
+import com.happyheng.lazy.service.LazySerializeMethodService;
 import com.rabbitmq.client.*;
-import org.springframework.aop.framework.Advised;
-import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.context.ApplicationContext;
-import org.springframework.context.ApplicationContextAware;
 import org.springframework.stereotype.Component;
-import org.springframework.util.CollectionUtils;
 
 import javax.annotation.PostConstruct;
 import java.io.IOException;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 /**
  *
  * Created by happyheng on 2019-10-05.
  */
 @Component
-public class LazyExecutionConsumer implements ApplicationContextAware {
+public class LazyExecutionConsumer {
 
     @Value("${rabbitmq.dead.queue.name}")
     private String deadQueueName;
     @Autowired
     private RabbitMQConnectionFactoryHolder rabbitMQConnectionFactoryHolder;
+    @Autowired
+    private LazySerializeMethodService lazySerializeMethodService;
 
-    private ApplicationContext applicationContext;
-
-    public void setApplicationContext(ApplicationContext var1) throws BeansException {
-        this.applicationContext = var1;
-    }
 
     @PostConstruct
     public void consumer() throws Exception{
@@ -66,41 +58,11 @@ public class LazyExecutionConsumer implements ApplicationContextAware {
                         channel.basicAck(envelope.getDeliveryTag(), false);
                         return;
                     }
-
-                    // 获取到里面的 className， methodName，方法的参数类型Name列表
-                    String className = serializableMethod.getClassName();
-                    String methodName = serializableMethod.getMethodName();
-                    List<String> paramsTypeClassNameList = serializableMethod.getParamsTypeClassName();
-                    List<String> params = serializableMethod.getParams();
-                    // 找到对应的object
-                    Class<?> executeObjectClass = Class.forName(className);
-                    Object executeProxyObject = applicationContext.getBean(executeObjectClass);
-                    Object executeObject = ((Advised)executeProxyObject).getTargetSource().getTarget();
-
-                    // 根据参数序列化的数组与method中参数类型，得到执行参数中的类型数组，与json参数数组反序列化成object数组
-                    List<Class<?>> methodParamsTypeList = new ArrayList<>();
-                    List<Object> methodParamsList = new ArrayList<>();
-                    if (!CollectionUtils.isEmpty(paramsTypeClassNameList)) {
-                        methodParamsTypeList = paramsTypeClassNameList.stream()
-                                .map(paramsTypeClassName -> {
-                                    try {
-                                        return Class.forName(paramsTypeClassName);
-                                    } catch (ClassNotFoundException e) {
-                                        e.printStackTrace();
-                                    }
-                                    return null;
-                                }).collect(Collectors.toList());
-
-                        for (int i=0; i< paramsTypeClassNameList.size(); i ++) {
-                            methodParamsList.add(gson.fromJson(params.get(i),
-                                    Class.forName(paramsTypeClassNameList.get(i))));
-
-                        }
-                    }
-
-                    // 找到method
-                    Method method = executeObjectClass.getMethod(methodName, methodParamsTypeList.toArray(new Class<?>[]{}));
-
+                    // 调用lazySerializeMethodService获取到反序列化后的可执行bean UnSerializableExecuteAbleMethod
+                    UnSerializableExecuteAbleMethod unSerializableExecuteAbleMethod = lazySerializeMethodService.unSerializeMethod(serializableMethod);
+                    Object executeObject = unSerializableExecuteAbleMethod.getExecuteObject();
+                    Method method = unSerializableExecuteAbleMethod.getMethod();
+                    List<Object> methodParamsList = unSerializableExecuteAbleMethod.getParamsList();
                     // 执行
                     method.invoke(executeObject, methodParamsList.toArray(new Object[]{}));
                     System.out.println("消费者执行完成");

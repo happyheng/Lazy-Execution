@@ -1,4 +1,4 @@
-package com.happyheng;
+package com.happyheng.service;
 
 import com.happyheng.lazy.anno.LazyExecution;
 import org.springframework.stereotype.Service;
